@@ -1,0 +1,77 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: 核心测试 + arm64 .app
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 工具链信息
+        run: |
+          set -x
+          uname -m
+          sw_vers
+          xcode-select -p
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: 环境自检
+        run: |
+          chmod +x Scripts/*.sh
+          bash Scripts/check-toolchain.sh
+
+      - name: 运行核心逻辑测试（配置/状态机/SRun 协议）
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee test.log
+
+      - name: 构建 .app（arm64，ad-hoc 签名）并打包 zip
+        run: bash Scripts/build-app.sh
+
+      - name: 校验产物结构
+        run: |
+          set -euo pipefail
+          APP="dist/CampusNetPilot.app"
+          lipo -info "$APP/Contents/MacOS/CampusNetPilot" | tee lipo.txt
+          grep -q arm64 lipo.txt
+          test -f "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          codesign --verify --strict --verbose=2 "$APP"
+          ls -lh dist
+
+      - name: 上传构建产物（zip）
+        uses: actions/upload-artifact@v4
+        with:
+          name: CampusNetPilot-macos-arm64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: 上传测试日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test.log
+          if-no-files-found: warn
+          retention-days: 3

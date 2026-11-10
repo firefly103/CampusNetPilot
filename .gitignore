@@ -1,0 +1,11 @@
+.build/
+dist/
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+.swiftpm/
+ref/
+tools/*.log
+test.log
+lipo.txt

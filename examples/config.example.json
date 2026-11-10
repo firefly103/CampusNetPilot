@@ -1,0 +1,37 @@
+{
+  "_comment": "示例配置：不含任何真实账号或密码。实际文件位置 ~/Library/Application Support/CampusNetPilot/config.json，由应用设置界面生成；修改后点「保存配置」或重启应用生效。密码不在此文件，保存在钥匙串 com.example.CampusNetPilot。",
+  "autoAuthEnabled": true,
+  "campusAuthMode": "srun",
+  "campusSSIDs": [
+    "Campus-WiFi"
+  ],
+  "campusUsername": "2024000000",
+  "connectivityInterval": 30,
+  "dormNetworks": [
+    {
+      "bssid": null,
+      "requiresPassword": true,
+      "ssid": "宿舍-WiFi"
+    },
+    {
+      "requiresPassword": false,
+      "ssid": "宿舍-WiFi-备用"
+    }
+  ],
+  "eportalLoginURL": "",
+  "launchAtLogin": false,
+  "probeURLs": [
+    "https://captive.apple.com/hotspot-detect.html",
+    "https://connectivitycheck.gstatic.com/generate_204"
+  ],
+  "scheduledScanEnabled": false,
+  "scheduledScanInterval": 180,
+  "srunBaseURL": "https://net.szu.edu.cn",
+  "srunXXTEAVariant": "reference",
+  "version": 1,
+  "whitelistSSIDs": [
+    "宿舍-WiFi",
+    "宿舍-WiFi-备用",
+    "iPhone 热点"
+  ]
+}
