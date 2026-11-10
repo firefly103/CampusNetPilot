@@ -183,7 +183,7 @@ final class WiFiMonitor: NSObject, CWEventDelegate, @unchecked Sendable {
         guard started else { return }
         started = false
         for event in events {
-            client.stopMonitoringEvent(with: event)
+            try? client.stopMonitoringEvent(with: event)
         }
         client.delegate = nil
         pathMonitor.cancel()
