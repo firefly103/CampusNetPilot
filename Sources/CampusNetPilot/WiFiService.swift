@@ -5,6 +5,7 @@ import CoreWLAN
 import Darwin
 import IOKit
 import Network
+import CampusNetCore
 
 // MARK: - Wi-Fi（CoreWLAN）
 
@@ -119,7 +120,7 @@ final class WiFiService: WiFiControlling, @unchecked Sendable {
         guard let interface = client.interface() else {
             return WiFiSnapshot(power: .unknown, interfaceName: nil, interfaceAvailable: false, ssid: nil, readability: .unknown)
         }
-        let name = interface.interfaceName()
+        let name = interface.interfaceName
         guard interface.powerOn() else {
             return WiFiSnapshot(power: .off, interfaceName: name, interfaceAvailable: true, ssid: nil)
         }
@@ -160,7 +161,7 @@ final class WiFiMonitor: NSObject, CWEventDelegate, @unchecked Sendable {
     private let debounceQueue = DispatchQueue(label: "com.example.CampusNetPilot.wifi.monitor")
     private var pending: DispatchWorkItem?
     private var started = false
-    private let events: [CWEvent] = [.ssidDidChange, .bssidDidChange, .linkDidChange, .powerDidChange]
+    private let events: [CWEventType] = [.ssidDidChange, .bssidDidChange, .linkDidChange, .powerDidChange]
 
     var onChange: (@Sendable () -> Void)?
 

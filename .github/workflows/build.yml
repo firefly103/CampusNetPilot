@@ -11,13 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write   # 仅用于失败时把编译错误写进提交评论（便于无需登录即可查看）
 
 jobs:
   test-and-build:
     name: 核心测试 + arm64 .app
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: 检出代码
@@ -43,7 +43,9 @@ jobs:
           swift test 2>&1 | tee test.log
 
       - name: 构建 .app（arm64，ad-hoc 签名）并打包 zip
-        run: bash Scripts/build-app.sh
+        run: |
+          set -o pipefail
+          bash Scripts/build-app.sh 2>&1 | tee build.log
 
       - name: 校验产物结构
         run: |
@@ -67,11 +69,33 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: 上传测试日志
+      - name: 上传完整日志（无论成败）
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-log
-          path: test.log
+          name: build-logs
+          path: |
+            test.log
+            build.log
+            lipo.txt
           if-no-files-found: warn
           retention-days: 3
+
+      - name: 失败诊断（把编译错误写进提交评论，无需登录即可查看）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          LOG=/tmp/ci-error.txt
+          {
+            echo "macOS 构建失败：$GITHUB_SHA"
+            echo ""
+            echo '```'
+            echo "--- build.log (tail 120) ---"
+            tail -n 120 build.log 2>/dev/null || echo "(无 build.log)"
+            echo "--- test.log (tail 60) ---"
+            tail -n 60 test.log 2>/dev/null || echo "(无 test.log)"
+            echo '```'
+          } > "$LOG"
+          jq -Rs '{body: .}' "$LOG" | gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" --input - || true

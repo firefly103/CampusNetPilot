@@ -1,11 +1,23 @@
 import Foundation
 @testable import CampusNetCore
 
+// MARK: - 同步作用域锁
+
+/// 异步函数里不能直接调用 `NSLock.lock()/unlock()`（Swift 6 下是错误、5.x 下是警告）。
+/// 这里把临界区放进串行队列的同步执行块：锁内不含 `await`，也不会跨挂起点持锁。
+final class ScopedLock: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.example.CampusNetPilot.tests.lock")
+
+    func sync<T>(_ body: () throws -> T) rethrows -> T {
+        try queue.sync(execute: body)
+    }
+}
+
 // MARK: - 测试替身
 
 /// 可编程的 Wi-Fi 假实现：记录调用次数，支持用 Gate 卡住扫描以模拟"合盖时仍在进行"的任务。
 final class FakeWiFi: WiFiControlling, @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = ScopedLock()
     private var _snapshot: WiFiSnapshot
     private var _scanOutcomes: [ScanOutcome]
     private var _connectOutcome: ConnectOutcome
@@ -26,67 +38,60 @@ final class FakeWiFi: WiFiControlling, @unchecked Sendable {
         self._connectOutcome = connectOutcome
     }
 
-    var scanCount: Int { lock.lock(); defer { lock.unlock() }; return _scanCount }
-    var connectCount: Int { lock.lock(); defer { lock.unlock() }; return _connectCount }
-    var snapshotCount: Int { lock.lock(); defer { lock.unlock() }; return _snapshotCount }
-    var lastConnectPassword: String? { lock.lock(); defer { lock.unlock() }; return _lastConnectPassword }
+    var scanCount: Int { lock.sync { _scanCount } }
+    var connectCount: Int { lock.sync { _connectCount } }
+    var snapshotCount: Int { lock.sync { _snapshotCount } }
+    var lastConnectPassword: String? { lock.sync { _lastConnectPassword } }
 
     func setSnapshot(_ snapshot: WiFiSnapshot) {
-        lock.lock()
-        _snapshot = snapshot
-        lock.unlock()
+        lock.sync { _snapshot = snapshot }
     }
 
     func setScanOutcomes(_ outcomes: [ScanOutcome]) {
-        lock.lock()
-        _scanOutcomes = outcomes
-        lock.unlock()
+        lock.sync { _scanOutcomes = outcomes }
     }
 
     func setConnectOutcome(_ outcome: ConnectOutcome) {
-        lock.lock()
-        _connectOutcome = outcome
-        lock.unlock()
+        lock.sync { _connectOutcome = outcome }
     }
 
     func snapshot() async -> WiFiSnapshot {
-        lock.lock()
-        _snapshotCount += 1
-        let value = _snapshot
-        lock.unlock()
-        return value
+        lock.sync {
+            _snapshotCount += 1
+            return _snapshot
+        }
     }
 
     func scan() async -> ScanOutcome {
-        lock.lock()
-        _scanCount += 1
-        let gate = scanGate
-        lock.unlock()
+        let gate = lock.sync { () -> Gate? in
+            _scanCount += 1
+            return scanGate
+        }
         if let gate { await gate.wait() }
-        lock.lock()
-        defer { lock.unlock() }
-        guard !_scanOutcomes.isEmpty else { return .success([]) }
-        if _scanOutcomes.count == 1 { return _scanOutcomes[0] }
-        return _scanOutcomes.removeFirst()
+        return lock.sync {
+            guard !_scanOutcomes.isEmpty else { return .success([]) }
+            if _scanOutcomes.count == 1 { return _scanOutcomes[0] }
+            return _scanOutcomes.removeFirst()
+        }
     }
 
     func connect(ssid: String, bssid: String?, password: String?) async -> ConnectOutcome {
-        lock.lock()
-        _connectCount += 1
-        _lastConnectPassword = password
-        let outcome = _connectOutcome
-        if case .connected = outcome {
-            _snapshot.ssid = ssid
-            _snapshot.bssid = bssid ?? _snapshot.bssid
-            _snapshot.readability = .available
+        lock.sync {
+            _connectCount += 1
+            _lastConnectPassword = password
+            let outcome = _connectOutcome
+            if case .connected = outcome {
+                _snapshot.ssid = ssid
+                _snapshot.bssid = bssid ?? _snapshot.bssid
+                _snapshot.readability = .available
+            }
+            return outcome
         }
-        lock.unlock()
-        return outcome
     }
 }
 
 final class FakeProbe: ConnectivityProbing, @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = ScopedLock()
     private var _result: ProbeResult
     private var _count = 0
 
@@ -96,27 +101,24 @@ final class FakeProbe: ConnectivityProbing, @unchecked Sendable {
 
     var onProbe: (@Sendable () -> Void)?
 
-    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+    var count: Int { lock.sync { _count } }
 
     func setResult(_ result: ProbeResult) {
-        lock.lock()
-        _result = result
-        lock.unlock()
+        lock.sync { _result = result }
     }
 
     func probe() async -> ProbeResult {
-        lock.lock()
-        _count += 1
-        let value = _result
-        let hook = onProbe
-        lock.unlock()
+        let (value, hook) = lock.sync { () -> (ProbeResult, (@Sendable () -> Void)?) in
+            _count += 1
+            return (_result, onProbe)
+        }
         hook?()
         return value
     }
 }
 
 final class FakeAuth: CampusAuthenticating, @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = ScopedLock()
     private var _result: AuthResult
     private var _requests: [AuthRequest] = []
 
@@ -126,26 +128,22 @@ final class FakeAuth: CampusAuthenticating, @unchecked Sendable {
 
     var authGate: Gate?
 
-    var count: Int { lock.lock(); defer { lock.unlock() }; return _requests.count }
-    var requests: [AuthRequest] { lock.lock(); defer { lock.unlock() }; return _requests }
+    var count: Int { lock.sync { _requests.count } }
+    var requests: [AuthRequest] { lock.sync { _requests } }
 
     func setResult(_ result: AuthResult) {
-        lock.lock()
-        _result = result
-        lock.unlock()
+        lock.sync { _result = result }
     }
 
     func login(_ request: AuthRequest) async -> AuthResult {
-        lock.lock()
-        _requests.append(request)
-        let result = _result
-        let gate = authGate
-        lock.unlock()
+        let (result, gate) = lock.sync { () -> (AuthResult, Gate?) in
+            _requests.append(request)
+            return (_result, authGate)
+        }
         if let gate { await gate.wait() }
         return result
     }
 }
-
 final class FakeCredentials: CredentialProviding, @unchecked Sendable {
     var campusPasswordValue: String? = "campus-secret"
     var wifiPasswords: [String: String] = ["宿舍-WiFi": "dorm-secret"]
